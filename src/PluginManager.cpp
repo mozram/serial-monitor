@@ -3,7 +3,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 
-struct PluginManager::Impl {
+struct __attribute__((visibility("hidden"))) PluginManager::Impl {
     py::scoped_interpreter guard;
     QMap<QString, py::object> plugins;
 };
