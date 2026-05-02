@@ -1,0 +1,66 @@
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
+
+#include <QMainWindow>
+#include <QPlainTextEdit>
+#include <QComboBox>
+#include <QPushButton>
+#include <QRadioButton>
+#include <QCheckBox>
+#include <QSpinBox>
+#include <QTimer>
+#include <QThread>
+#include <QDateTime>
+#include "SerialWorker.h"
+#include "PluginManager.h"
+
+struct LogEntry {
+    QDateTime time;
+    QString type; // RX, TX, INFO
+    QByteArray data;
+    QString prefix;
+};
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+public:
+    MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
+
+private slots:
+    void refreshPorts();
+    void toggleConnection();
+    void handleDataReceived(const QByteArray &data);
+    void handleError(const QString &error);
+    void updateConnectionStatus(bool connected, const QString &msg);
+    void sendData();
+    void flushReceiveBuffer();
+    void rebuildTerminal();
+    void exportLogs();
+    void clearTerminal();
+
+private:
+    void initUi();
+    void logEvent(const QString &type, const QByteArray &data, const QString &prefix = "");
+    void renderEntry(const LogEntry &entry, bool scroll = true);
+
+    // UI Components
+    QComboBox *m_portCombo, *m_baudCombo, *m_dataBitsCombo, *m_stopBitsCombo, *m_parityCombo;
+    QPushButton *m_connectBtn, *m_sendBtn;
+    QPlainTextEdit *m_terminalDisplay, *m_timestampDisplay;
+    QCheckBox *m_timeCheck, *m_sepCheck, *m_metaCheck, *m_hexCheck, *m_newlineCheck;
+    QRadioButton *m_sendTextRadio, *m_sendHexRadio;
+    QSpinBox *m_hysteresisSpin;
+    QComboBox *m_decoderCombo;
+    QLineEdit *m_sendInput;
+
+    // Backend
+    QThread *m_serialThread;
+    SerialWorker *m_worker;
+    QList<LogEntry> m_logEntries;
+    QByteArray m_receiveBuffer;
+    QTimer *m_receiveTimer;
+    bool m_isConnected = false;
+};
+
+#endif // MAINWINDOW_H

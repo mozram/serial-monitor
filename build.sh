@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+mkdir -p build
+cd build
+cmake ..
+cmake --build . --config Release
+echo "Build Successful!"
