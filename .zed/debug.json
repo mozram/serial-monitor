@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Debug Serial Monitor",
+    "adapter": "CodeLLDB",
+    "type": "lldb",
+    "label": "serial",
+    "request": "launch",
+    "program": "build_debug/serial-terminal-qt",
+    "cwd": "build_debug",
+  },
+]
