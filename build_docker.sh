@@ -35,6 +35,9 @@ ${DOCKER_CMD} run --rm \
         -DFETCHCONTENT_SOURCE_DIR_PYBIND11=/workspace/pybind11-src .. && \
       ninja && \
       windeployqt serial-terminal-qt.exe && \
+      cp /home/user/.wine/drive_c/Qt/Tools/mingw1120_64/opt/bin/libpython3.9.dll . && \
+      mkdir -p ./lib/python3.9 && \
+      cp -r /home/user/.wine/drive_c/Qt/Tools/mingw1120_64/opt/lib/python3.9/* ./lib/python3.9/ && \
       sudo chown -R \$(stat -c '%u:%g' /workspace) /workspace/build_windows /workspace/pybind11-src
     "
 
