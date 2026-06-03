@@ -45,7 +45,7 @@ target_link_libraries(serial-terminal-qt PRIVATE
     Qt6::Core
     pybind11::embed
 )
-sh
+
 if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  target_link_libraries(serial-terminal-qt PRIVATE -lssp)
+  set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lssp")
 endif()
