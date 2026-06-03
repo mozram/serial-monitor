@@ -52,7 +52,7 @@ private:
     QRadioButton *m_sendTextRadio, *m_sendHexRadio;
     QSpinBox *m_hysteresisSpin;
     QComboBox *m_decoderCombo;
-    QLineEdit *m_sendInput;
+    QComboBox *m_sendInput;
 
     // Backend
     QThread *m_serialThread;

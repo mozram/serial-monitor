@@ -73,8 +73,15 @@ export WINEDEBUG=-all
 wine /tmp/rcedit.exe /tmp/lzma/bin/7zSD.sfx --application-manifest /tmp/manifest.xml
 
 cd /workspace/build_windows
+
+# Define the exact files/folders needed for deployment
+DEPLOY_FILES="serial-terminal-qt.exe *.dll lib/ generic/ iconengines/ imageformats/ networkinformation/ platforms/ styles/ tls/ translations/"
+
+# Create the standard dynamic ZIP archive
+sudo 7z a -tzip serial-monitor-windows.zip $DEPLOY_FILES > /dev/null
+
 sudo bash -c "echo -e \";!@Install@!UTF-8!\nTitle=\\\"Serial Monitor\\\"\nRunProgram=\\\"serial-terminal-qt.exe\\\"\n;!@InstallEnd@!\" > config.txt"
-sudo 7z a -r release.7z * > /dev/null
+sudo 7z a -r release.7z $DEPLOY_FILES > /dev/null
 sudo bash -c "cat /tmp/lzma/bin/7zSD.sfx config.txt release.7z > serial-monitor-portable.exe"
 sudo rm release.7z config.txt
 EOF
@@ -82,4 +89,6 @@ EOF
 ${DOCKER_CMD} run --rm -v "$PWD:/workspace" "${IMAGE_NAME}" bash /workspace/package_sfx.sh
 rm package_sfx.sh
 
-echo "Build complete. Portable artifact is build_windows/serial-monitor-portable.exe"
+echo "Build complete. Artifacts are in build_windows/ :"
+echo " - serial-monitor-portable.exe (Single Portable Executable)"
+echo " - serial-monitor-windows.zip (Standard Extracted ZIP)"

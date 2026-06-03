@@ -32,9 +32,9 @@ add_executable(serial-terminal-qt
     src/PluginManager.h
 )
 
-target_link_libraries(serial-terminal-qt PRIVATE 
-    Qt6::Widgets 
-    Qt6::SerialPort 
+target_link_libraries(serial-terminal-qt PRIVATE
+    Qt6::Widgets
+    Qt6::SerialPort
     Qt6::Core
     pybind11::embed
 )

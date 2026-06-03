@@ -13,6 +13,8 @@
 #include <QTextCursor>
 #include <QLineEdit>
 #include <QRegularExpression>
+#include <QFile>
+#include <QTextStream>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     initUi();
@@ -161,8 +163,26 @@ void MainWindow::initUi() {
     sendGroupLayout->addLayout(sendModeLayout);
 
     QHBoxLayout *sendInputLayout = new QHBoxLayout();
-    m_sendInput = new QLineEdit(this);
-    m_sendInput->setPlaceholderText("Enter text to send... (or hex: FF AA 00 for hex mode)");
+    m_sendInput = new QComboBox(this);
+    m_sendInput->setEditable(true);
+    m_sendInput->setInsertPolicy(QComboBox::NoInsert);
+    m_sendInput->lineEdit()->setPlaceholderText("Enter text to send... (or hex: FF AA 00 for hex mode)");
+    m_sendInput->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    // Load history
+    QFile historyFile("history.txt");
+    if (historyFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&historyFile);
+        while (!in.atEnd()) {
+            QString line = in.readLine();
+            if (!line.isEmpty()) {
+                m_sendInput->addItem(line);
+            }
+        }
+        historyFile.close();
+    }
+    m_sendInput->setCurrentText(""); // Clear current text
+
     m_sendBtn = new QPushButton("Send", this);
     m_sendBtn->setEnabled(false);
     m_newlineCheck = new QCheckBox("Add Newline", this);
@@ -175,7 +195,7 @@ void MainWindow::initUi() {
     mainLayout->addWidget(sendGroup);
 
     connect(m_sendBtn, &QPushButton::clicked, this, &MainWindow::sendData);
-    connect(m_sendInput, &QLineEdit::returnPressed, this, &MainWindow::sendData);
+    connect(m_sendInput->lineEdit(), &QLineEdit::returnPressed, this, &MainWindow::sendData);
 
     // Action Buttons
     QHBoxLayout *actLayout = new QHBoxLayout();
@@ -240,7 +260,7 @@ void MainWindow::flushReceiveBuffer() {
 }
 
 void MainWindow::sendData() {
-    QString text = m_sendInput->text();
+    QString text = m_sendInput->currentText();
     if (text.isEmpty()) return;
 
     QByteArray data;
@@ -266,7 +286,27 @@ void MainWindow::sendData() {
 
     QMetaObject::invokeMethod(m_worker, "writeData", Q_ARG(QByteArray, data));
     logEvent("TX", data, prefix);
-    m_sendInput->clear();
+
+    // Update history
+    int existingIndex = m_sendInput->findText(text);
+    if (existingIndex != -1) {
+        m_sendInput->removeItem(existingIndex);
+    }
+    m_sendInput->insertItem(0, text);
+    m_sendInput->setCurrentText(text);
+    
+    while (m_sendInput->count() > 50) {
+        m_sendInput->removeItem(m_sendInput->count() - 1);
+    }
+
+    QFile historyFile("history.txt");
+    if (historyFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        QTextStream out(&historyFile);
+        for (int i = 0; i < m_sendInput->count(); ++i) {
+            out << m_sendInput->itemText(i) << "\n";
+        }
+        historyFile.close();
+    }
 }
 
 void MainWindow::logEvent(const QString &type, const QByteArray &data, const QString &prefix) {
