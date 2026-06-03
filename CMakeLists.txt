@@ -22,7 +22,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(pybind11)
 
-add_executable(serial-terminal-qt
+set(APP_ICON_RESOURCE "")
+if(WIN32)
+  set(APP_ICON_RESOURCE app.rc)
+endif()
+
+add_executable(serial-terminal-qt WIN32
     src/main.cpp
     src/MainWindow.cpp
     src/MainWindow.h
@@ -30,6 +35,8 @@ add_executable(serial-terminal-qt
     src/SerialWorker.h
     src/PluginManager.cpp
     src/PluginManager.h
+    resources.qrc
+    ${APP_ICON_RESOURCE}
 )
 
 target_link_libraries(serial-terminal-qt PRIVATE
@@ -38,3 +45,7 @@ target_link_libraries(serial-terminal-qt PRIVATE
     Qt6::Core
     pybind11::embed
 )
+sh
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_link_libraries(serial-terminal-qt PRIVATE -lssp)
+endif()
