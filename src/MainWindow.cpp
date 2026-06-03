@@ -154,7 +154,7 @@ void MainWindow::initUi() {
 
     QHBoxLayout *sendModeLayout = new QHBoxLayout();
     m_sendTextRadio = new QRadioButton("Text", this);
-    m_sendHexRadio = new QRadioButton("Hex (space-separated)", this);
+    m_sendHexRadio = new QRadioButton("Hex", this);
     m_sendTextRadio->setChecked(true);
     sendModeLayout->addWidget(new QLabel("Send Mode:"));
     sendModeLayout->addWidget(m_sendTextRadio);
