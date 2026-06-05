@@ -34,10 +34,13 @@ ${DOCKER_CMD} run --rm \
         -DPYBIND11_FINDPYTHON=ON \
         -DFETCHCONTENT_SOURCE_DIR_PYBIND11=/workspace/pybind11-src .. && \
       ninja && \
-      windeployqt serial-terminal-qt.exe && \
-      cp /home/user/.wine/drive_c/Qt/Tools/mingw1120_64/opt/bin/libpython3.9.dll . && \
-      mkdir -p ./lib/python3.9 && \
-      cp -r /home/user/.wine/drive_c/Qt/Tools/mingw1120_64/opt/lib/python3.9/* ./lib/python3.9/ && \
+      windeployqt --compiler-runtime serial-terminal-qt.exe && \
+      # Ensure libssp-0.dll is present (often missed by windeployqt)
+      find /home/user/.wine/drive_c/Qt/Tools -name \"libssp-0.dll\" -exec cp {} . \; && \
+      # Copy python runtime DLL and libraries
+      find /home/user/.wine/drive_c/Qt/Tools -name \"libpython3.9.dll\" -exec cp {} . \; && \
+      PYTHON_LIB_DIR=\$(find /home/user/.wine/drive_c/Qt/Tools -type d -path \"*/opt/lib/python3.9\" | head -n 1) && \
+      if [ -n \"\$PYTHON_LIB_DIR\" ]; then mkdir -p ./lib/python3.9 && cp -r \"\$PYTHON_LIB_DIR\"/* ./lib/python3.9/; fi && \
       sudo chown -R \$(stat -c '%u:%g' /workspace) /workspace/build_windows /workspace/pybind11-src
     "
 
