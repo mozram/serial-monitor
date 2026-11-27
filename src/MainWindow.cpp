@@ -27,15 +27,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_receiveTimer = new QTimer(this);
     m_receiveTimer->setSingleShot(true);
     connect(m_receiveTimer, &QTimer::timeout, this, &MainWindow::flushReceiveBuffer);
+
+    m_liveRenderTimer = new QTimer(this);
+    m_liveRenderTimer->setSingleShot(true);
+    connect(m_liveRenderTimer, &QTimer::timeout, this, &MainWindow::flushLiveRenderBuffer);
+
+    m_rebuildTimer = new QTimer(this);
+    m_rebuildTimer->setSingleShot(true);
+    connect(m_rebuildTimer, &QTimer::timeout, this, &MainWindow::rebuildTerminalChunk);
+
     connect(m_hysteresisEnabledCheck, &QCheckBox::toggled, this, [this](bool enabled) {
         m_hysteresisSpin->setEnabled(enabled);
-        m_timeCheck->setEnabled(enabled);
-        m_sepCheck->setEnabled(enabled);
-        if (!enabled) {
-            m_receiveTimer->stop();
-            flushReceiveBuffer();
-        }
-        m_timestampDisplay->setVisible(enabled && m_sepCheck->isChecked());
+        m_receiveTimer->stop();
+        m_liveRenderTimer->stop();
+        flushReceiveBuffer();
+        flushLiveRenderBuffer();
         rebuildTerminal();
     });
 
@@ -66,24 +72,33 @@ void MainWindow::initUi() {
 
     // Connection Group
     QGroupBox *connGroup = new QGroupBox("Connection Settings", this);
+    connGroup->setToolTip("Configure the serial port and connection speed.");
     QHBoxLayout *connLayout = new QHBoxLayout(connGroup);
 
     m_portCombo = new QComboBox(this);
+    m_portCombo->setToolTip("Select the serial port to connect to.");
     QPushButton *refreshBtn = new QPushButton("Refresh", this);
+    refreshBtn->setToolTip("Refresh the list of available serial ports.");
     connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshPorts);
 
     m_baudCombo = new QComboBox(this);
     m_baudCombo->addItems({"9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"});
     m_baudCombo->setCurrentText("115200");
+    m_baudCombo->setToolTip("Select the baud rate used by the serial connection.");
 
     m_connectBtn = new QPushButton("Connect", this);
     m_connectBtn->setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;");
+    m_connectBtn->setToolTip("Open or close the serial connection.");
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::toggleConnection);
 
-    connLayout->addWidget(new QLabel("Port:"));
+    QLabel *portLabel = new QLabel("Port:", this);
+    portLabel->setToolTip("Serial device used for communication.");
+    connLayout->addWidget(portLabel);
     connLayout->addWidget(m_portCombo);
     connLayout->addWidget(refreshBtn);
-    connLayout->addWidget(new QLabel("Baud:"));
+    QLabel *baudLabel = new QLabel("Baud:", this);
+    baudLabel->setToolTip("Number of data symbols transmitted per second.");
+    connLayout->addWidget(baudLabel);
     connLayout->addWidget(m_baudCombo);
     connLayout->addStretch();
     connLayout->addWidget(m_connectBtn);
@@ -92,68 +107,64 @@ void MainWindow::initUi() {
     // Terminal Options
     QHBoxLayout *optLayout = new QHBoxLayout();
     m_hexCheck = new QCheckBox("Hex", this);
-    m_timeCheck = new QCheckBox("Time", this);
-    m_timeCheck->setChecked(false);
-    m_sepCheck = new QCheckBox("Separate", this);
-    m_metaCheck = new QCheckBox("Meta", this);
-    m_metaCheck->setChecked(false);
+    m_hexCheck->setToolTip("Display received and sent data in hexadecimal.");
 
     m_hysteresisEnabledCheck = new QCheckBox("Enable", this);
     m_hysteresisEnabledCheck->setChecked(false);
+    m_hysteresisEnabledCheck->setToolTip(
+        "Group incoming serial chunks received within the same delay.");
     m_hysteresisSpin = new QSpinBox(this);
     m_hysteresisSpin->setRange(0, 5000);
     m_hysteresisSpin->setValue(20);
     m_hysteresisSpin->setSuffix(" ms");
+    m_hysteresisSpin->setToolTip(
+        "Maximum quiet period in milliseconds before buffered receive data is displayed.");
+
+    const QString hysteresisHelpText =
+        "Groups incoming serial chunks into one receive entry after no data arrives "
+        "for the selected delay. Disable it to display each received chunk immediately.";
+    QLabel *hysteresisLabel = new QLabel("Hysteresis:", this);
+    hysteresisLabel->setAccessibleName("About Hysteresis");
+    hysteresisLabel->setToolTip(hysteresisHelpText);
 
     optLayout->addWidget(m_hexCheck);
-    optLayout->addWidget(m_timeCheck);
-    optLayout->addWidget(m_sepCheck);
-    optLayout->addWidget(m_metaCheck);
     optLayout->addSpacing(20);
-    optLayout->addWidget(new QLabel("Hysteresis:"));
+    optLayout->addWidget(hysteresisLabel);
     optLayout->addWidget(m_hysteresisEnabledCheck);
     optLayout->addWidget(m_hysteresisSpin);
     optLayout->addSpacing(20);
-    optLayout->addWidget(new QLabel("Decoder:"));
+    QLabel *decoderLabel = new QLabel("Decoder:", this);
+    decoderLabel->setToolTip(
+        "Apply a Python plugin to decode received data in the terminal.");
+    optLayout->addWidget(decoderLabel);
     m_decoderCombo = new QComboBox(this);
     m_decoderCombo->addItem("None");
     m_decoderCombo->addItems(PluginManager::instance().pluginNames());
+    m_decoderCombo->setToolTip(
+        "Select None or a Python decoder plugin from the plugins folder.");
     optLayout->addWidget(m_decoderCombo);
     optLayout->addStretch();
     mainLayout->addLayout(optLayout);
     
-    connect(m_decoderCombo, &QComboBox::currentIndexChanged, this, &MainWindow::rebuildTerminal);
+    connect(m_decoderCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int) {
+        m_decoderCombo->hidePopup();
+        m_decoderCombo->clearFocus();
+        QTimer::singleShot(0, this, [this]() {
+            m_decoderCombo->hidePopup();
+            rebuildTerminal();
+        });
+    });
 
     connect(m_hexCheck, &QCheckBox::toggled, this, &MainWindow::rebuildTerminal);
-    connect(m_timeCheck, &QCheckBox::toggled, this, &MainWindow::rebuildTerminal);
-    connect(m_sepCheck, &QCheckBox::toggled, [this](){
-        m_timestampDisplay->setVisible(m_hysteresisEnabledCheck->isChecked() && m_sepCheck->isChecked());
-        rebuildTerminal();
-    });
-    connect(m_metaCheck, &QCheckBox::toggled, this, &MainWindow::rebuildTerminal);
 
     // Terminal Display
-    QHBoxLayout *termLayout = new QHBoxLayout();
-    termLayout->setSpacing(0);
-    termLayout->setContentsMargins(0, 0, 0, 0);
-
     QFont monoFont("Monospace", 9);
     monoFont.setStyleHint(QFont::Monospace);
     monoFont.setFixedPitch(true);
 
-    m_timestampDisplay = new QPlainTextEdit(this);
-    m_timestampDisplay->setReadOnly(true);
-    m_timestampDisplay->setFont(monoFont);
-    m_timestampDisplay->setFixedWidth(110);
-    m_timestampDisplay->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_timestampDisplay->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-    m_timestampDisplay->setFrameStyle(QFrame::NoFrame);
-    m_timestampDisplay->document()->setDocumentMargin(0);
-    m_timestampDisplay->viewport()->setContentsMargins(0, 0, 0, 0);
-    m_timestampDisplay->hide();
-
     m_terminalDisplay = new QPlainTextEdit(this);
     m_terminalDisplay->setReadOnly(true);
+    m_terminalDisplay->setToolTip("Received serial data and sent data.");
     m_terminalDisplay->setFont(monoFont);
     m_terminalDisplay->setLineWrapMode(QPlainTextEdit::WidgetWidth);
     m_terminalDisplay->setWordWrapMode(QTextOption::WrapAnywhere);
@@ -161,23 +172,24 @@ void MainWindow::initUi() {
     m_terminalDisplay->setFrameStyle(QFrame::NoFrame);
     m_terminalDisplay->document()->setDocumentMargin(0);
     m_terminalDisplay->viewport()->setContentsMargins(0, 0, 0, 0);
+    m_terminalDisplay->document()->setMaximumBlockCount(5000);
 
-    termLayout->addWidget(m_timestampDisplay);
-    termLayout->addWidget(m_terminalDisplay);
-    mainLayout->addLayout(termLayout);
-
-    connect(m_terminalDisplay->verticalScrollBar(), &QScrollBar::valueChanged,
-            m_timestampDisplay->verticalScrollBar(), &QScrollBar::setValue);
+    mainLayout->addWidget(m_terminalDisplay);
 
     // Send Data
     QGroupBox *sendGroup = new QGroupBox("Send Data", this);
+    sendGroup->setToolTip("Send text or hexadecimal bytes over the serial connection.");
     QVBoxLayout *sendGroupLayout = new QVBoxLayout(sendGroup);
 
     QHBoxLayout *sendModeLayout = new QHBoxLayout();
     m_sendTextRadio = new QRadioButton("Text", this);
     m_sendHexRadio = new QRadioButton("Hex", this);
     m_sendTextRadio->setChecked(true);
-    sendModeLayout->addWidget(new QLabel("Send Mode:"));
+    m_sendTextRadio->setToolTip("Send the input as UTF-8 text.");
+    m_sendHexRadio->setToolTip("Send the input as hexadecimal bytes.");
+    QLabel *sendModeLabel = new QLabel("Send Mode:", this);
+    sendModeLabel->setToolTip("Choose whether the send input is text or hexadecimal.");
+    sendModeLayout->addWidget(sendModeLabel);
     sendModeLayout->addWidget(m_sendTextRadio);
     sendModeLayout->addWidget(m_sendHexRadio);
     sendModeLayout->addStretch();
@@ -189,6 +201,7 @@ void MainWindow::initUi() {
     m_sendInput->setInsertPolicy(QComboBox::NoInsert);
     m_sendInput->lineEdit()->setPlaceholderText("Enter text to send... (or hex: FF AA 00 for hex mode)");
     m_sendInput->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_sendInput->setToolTip("Enter data to send. Enter FF AA 00 in Hex mode.");
 
     // Load history
     QFile historyFile("history.txt");
@@ -206,8 +219,10 @@ void MainWindow::initUi() {
 
     m_sendBtn = new QPushButton("Send", this);
     m_sendBtn->setEnabled(false);
+    m_sendBtn->setToolTip("Send the entered data over the serial connection.");
     m_newlineCheck = new QCheckBox("Add Newline", this);
     m_newlineCheck->setChecked(true);
+    m_newlineCheck->setToolTip("Append a newline character in Text mode.");
 
     sendInputLayout->addWidget(m_sendInput);
     sendInputLayout->addWidget(m_newlineCheck);
@@ -222,6 +237,8 @@ void MainWindow::initUi() {
     QHBoxLayout *actLayout = new QHBoxLayout();
     QPushButton *clearBtn = new QPushButton("Clear Terminal", this);
     QPushButton *exportBtn = new QPushButton("Export to File", this);
+    clearBtn->setToolTip("Clear the terminal display and receive history.");
+    exportBtn->setToolTip("Save the terminal display to a text file.");
     connect(clearBtn, &QPushButton::clicked, this, &MainWindow::clearTerminal);
     connect(exportBtn, &QPushButton::clicked, this, &MainWindow::exportLogs);
     actLayout->addWidget(clearBtn);
@@ -264,13 +281,14 @@ void MainWindow::updateConnectionStatus(bool connected, const QString &msg) {
                                            "background-color: #4CAF50; color: white; font-weight: bold;");
     m_sendBtn->setEnabled(connected);
     statusBar()->showMessage(msg);
-    logEvent("INFO", msg.toUtf8(), "SYSTEM");
+    logEvent("INFO", msg.toUtf8());
 }
 
 void MainWindow::handleDataReceived(const QByteArray &data) {
     if (data.isEmpty()) return;
     if (!m_hysteresisEnabledCheck->isChecked()) {
-        logEvent("RX", data, "RX", true);
+        m_liveRenderBuffer.append(data);
+        if (!m_liveRenderTimer->isActive()) m_liveRenderTimer->start(16);
         return;
     }
 
@@ -280,8 +298,14 @@ void MainWindow::handleDataReceived(const QByteArray &data) {
 
 void MainWindow::flushReceiveBuffer() {
     if (m_receiveBuffer.isEmpty()) return;
-    logEvent("RX", m_receiveBuffer, "RX");
+    logEvent("RX", m_receiveBuffer);
     m_receiveBuffer.clear();
+}
+
+void MainWindow::flushLiveRenderBuffer() {
+    if (m_liveRenderBuffer.isEmpty()) return;
+    logEvent("RX", m_liveRenderBuffer, true);
+    m_liveRenderBuffer.clear();
 }
 
 void MainWindow::sendData() {
@@ -289,7 +313,6 @@ void MainWindow::sendData() {
     if (text.isEmpty()) return;
 
     QByteArray data;
-    QString prefix = "TX";
 
     if (m_sendHexRadio->isChecked()) {
         QString clean = text.toUpper();
@@ -303,14 +326,13 @@ void MainWindow::sendData() {
             QMessageBox::warning(this, "Format Error", "Invalid hex format.");
             return;
         }
-        prefix = "TX HEX";
     } else {
         data = text.toUtf8();
         if (m_newlineCheck->isChecked()) data.append('\n');
     }
 
     QMetaObject::invokeMethod(m_worker, "writeData", Q_ARG(QByteArray, data));
-    logEvent("TX", data, prefix);
+    logEvent("TX", data);
 
     // Update history
     int existingIndex = m_sendInput->findText(text);
@@ -334,11 +356,15 @@ void MainWindow::sendData() {
     }
 }
 
-void MainWindow::logEvent(const QString &type, const QByteArray &data, const QString &prefix, bool streaming) {
-    LogEntry entry = { QDateTime::currentDateTime(), type, data, prefix, streaming };
+void MainWindow::logEvent(const QString &type, const QByteArray &data, bool streaming) {
+    LogEntry entry = { type, data, streaming };
     m_logEntries.append(entry);
     if (m_logEntries.size() > 5000) m_logEntries.removeFirst();
-    renderEntry(entry);
+    if (m_rebuilding) {
+        m_liveEntriesDuringRebuild.append(entry);
+        return;
+    }
+    renderEntry(m_logEntries.last());
 }
 
 void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
@@ -352,9 +378,19 @@ void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
     } else {
         QString currentDecoder = m_decoderCombo->currentText();
         if (currentDecoder != "None") {
-            dataText = streamingRx
-                ? PluginManager::instance().decodeStream(currentDecoder, entry.data)
-                : PluginManager::instance().decode(currentDecoder, entry.data);
+            if (streamingRx) {
+                dataText = PluginManager::instance().decodeStream(currentDecoder, entry.data);
+            } else {
+                QHash<QByteArray, QString> &cache = m_decoderCache[currentDecoder];
+                auto cached = cache.constFind(entry.data);
+                if (cached != cache.cend()) {
+                    dataText = cached.value();
+                } else {
+                    dataText = PluginManager::instance().decode(currentDecoder, entry.data);
+                    if (cache.size() >= 5000) cache.clear();
+                    cache.insert(entry.data, dataText);
+                }
+            }
         } else {
             dataText = QString::fromUtf8(entry.data).replace("\r\n", "\n").replace('\r', '\n');
         }
@@ -363,22 +399,11 @@ void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
     if (!streamingRx && !dataText.endsWith('\n')) dataText.append('\n');
     const bool endsWithNewline = dataText.endsWith('\n');
 
-    QString prefixStr = entry.prefix;
-    if ((entry.type == "RX" || entry.type == "TX") && m_hexCheck->isChecked()) prefixStr += " HEX";
-    QString finalPrefix = m_metaCheck->isChecked() ? QString("[%1] ").arg(prefixStr) : "";
-
-    const bool timeEnabled = m_hysteresisEnabledCheck->isChecked() && m_timeCheck->isChecked();
-    const bool separateTimeEnabled = timeEnabled && m_sepCheck->isChecked();
-    QString timestamp = timeEnabled ? entry.time.toString("hh:mm:ss.zzz") : "";
     const QColor textColor = entry.type == "TX"
         ? QColor(Qt::darkGreen)
         : m_terminalDisplay->palette().color(QPalette::Text);
     QTextCharFormat terminalFormat;
     terminalFormat.setForeground(QBrush(textColor));
-    QTextCharFormat timestampFormat;
-    timestampFormat.setForeground(QBrush(entry.type == "TX"
-        ? QColor(Qt::darkGreen)
-        : m_timestampDisplay->palette().color(QPalette::Text)));
 
     QTextBlockFormat blockFormat;
     blockFormat.setLineHeight(13, 4);
@@ -387,9 +412,6 @@ void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
 
     QTextCursor termCursor(m_terminalDisplay->document());
     termCursor.movePosition(QTextCursor::End);
-
-    QTextCursor tsCursor(m_timestampDisplay->document());
-    tsCursor.movePosition(QTextCursor::End);
 
     // Smart auto-scroll check
     QScrollBar *vBar = m_terminalDisplay->verticalScrollBar();
@@ -409,36 +431,17 @@ void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
             else termCursor.setBlockFormat(blockFormat);
         }
 
-        QString inlineTs = "";
-        if (!separateTimeEnabled && !timestamp.isEmpty() && !continuesLine) {
-            inlineTs = (i == 0 ? timestamp + " " : QString(timestamp.length() + 1, ' '));
-        }
-
-        QString linePrefix = continuesLine
-            ? ""
-            : (i == 0 ? finalPrefix : QString(finalPrefix.length(), ' '));
-        termCursor.insertText(inlineTs + linePrefix + line, terminalFormat);
-
-        // 2. Timestamp Panel Insertion
-        if (separateTimeEnabled && !continuesLine) {
-            if (!tsCursor.atBlockStart()) tsCursor.insertBlock(blockFormat);
-            else tsCursor.setBlockFormat(blockFormat);
-
-            if (i == 0) tsCursor.insertText(timestamp, timestampFormat);
-            else tsCursor.insertText(QString(timestamp.length() - 1, ' ') + "|", timestampFormat);
-        }
+        termCursor.insertText(line, terminalFormat);
 
         const bool lineBreakAfter = i + 1 < lines.size() || endsWithNewline;
         if (lineBreakAfter) {
             termCursor.insertBlock(blockFormat);
-            if (separateTimeEnabled) tsCursor.insertBlock(blockFormat);
         }
         m_terminalLineOpen = !lineBreakAfter;
     }
 
     if (scroll && atBottom) {
         m_terminalDisplay->ensureCursorVisible();
-        m_timestampDisplay->ensureCursorVisible();
         vBar->setValue(vBar->maximum());
     }
 }
@@ -447,19 +450,45 @@ void MainWindow::rebuildTerminal() {
     const QString currentDecoder = m_decoderCombo->currentText();
     if (currentDecoder != "None") PluginManager::instance().resetStream(currentDecoder);
 
+    m_rebuildTimer->stop();
     m_terminalLineOpen = false;
+    m_rebuilding = true;
+    m_rebuildIndex = 0;
+    m_rebuildEntries = m_logEntries;
+    m_liveEntriesDuringRebuild.clear();
     m_terminalDisplay->setUpdatesEnabled(false);
-    m_timestampDisplay->setUpdatesEnabled(false);
     m_terminalDisplay->clear();
-    m_timestampDisplay->clear();
-    for (const auto &entry : m_logEntries) renderEntry(entry, false);
+    m_rebuildTimer->start(1);
+}
+
+void MainWindow::rebuildTerminalChunk() {
+    constexpr int entriesPerChunk = 20;
+    int entriesRendered = 0;
+
+    while (m_rebuildIndex < m_rebuildEntries.size()
+           && entriesRendered < entriesPerChunk) {
+        renderEntry(m_rebuildEntries[m_rebuildIndex], false);
+        ++m_rebuildIndex;
+        ++entriesRendered;
+    }
+
+    if (m_rebuildIndex < m_rebuildEntries.size()) {
+        m_rebuildTimer->start(8);
+        return;
+    }
+
+    m_rebuilding = false;
     m_terminalDisplay->setUpdatesEnabled(true);
-    m_timestampDisplay->setUpdatesEnabled(true);
+    for (const auto &entry : m_liveEntriesDuringRebuild) {
+        renderEntry(entry, false);
+    }
+    m_liveEntriesDuringRebuild.clear();
     m_terminalDisplay->verticalScrollBar()->setValue(m_terminalDisplay->verticalScrollBar()->maximum());
 }
 
 void MainWindow::clearTerminal() {
     m_logEntries.clear();
+    m_decoderCache.clear();
     rebuildTerminal();
 }
 

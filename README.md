@@ -5,9 +5,9 @@ A high-performance C++ implementation of the Serial Terminal with Python plugin 
 ## Features
 
 - **High-Performance**: Non-blocking multi-threaded serial capture.
-- **Precision Alignment**: Fixed 13px line-height for pixel-perfect vertical sync between data and timestamps.
+- **Precision Alignment**: Fixed 13px line-height for consistent terminal rendering.
 - **Python Plugins**: Extend the terminal with custom Python decoders for real-time data analysis.
-- **Dynamic Rendering**: Instant re-rendering of entire history when toggling Hex/Text, Metadata, or Timestamps.
+- **Dynamic Rendering**: Instant re-rendering of entire history when toggling Hex/Text or changing decoders.
 - **Cross-Platform**: Support for Linux, macOS, and Windows.
 - **Smart Auto-scroll**: Intelligently pauses scrolling when inspecting historical data.
 
@@ -56,4 +56,4 @@ Select your plugin from the **"Decoder"** dropdown in the UI to apply it to live
 Plugins may also implement `decode_stream(raw_bytes)` and `reset_stream()` to carry incomplete data across continuous receive chunks. The application resets stream state before replaying history. The `dipc_frame` plugin uses this to retain partial `0x12`-delimited frames until complete and output each frame, including its delimiters, as an uppercase hex line.
 
 ## Exporting Logs
-The application supports viewport-accurate exporting. Use the **"Export to File"** button to save exactly what is visible in the terminal (respecting your current mode, metadata, and timestamp settings).
+The application supports viewport-accurate exporting. Use the **"Export to File"** button to save exactly what is visible in the terminal (respecting your current mode and display settings).
