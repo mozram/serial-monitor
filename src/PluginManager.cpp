@@ -6,6 +6,7 @@
 struct __attribute__((visibility("hidden"))) PluginManager::Impl {
     py::scoped_interpreter guard;
     QMap<QString, py::object> plugins;
+    QMap<QString, py::object> modules;
 };
 
 PluginManager& PluginManager::instance() {
@@ -23,6 +24,7 @@ PluginManager::~PluginManager() {
 
 void PluginManager::refreshPlugins() {
     m_impl->plugins.clear();
+    m_impl->modules.clear();
     
     QDir pluginsDir(QCoreApplication::applicationDirPath() + "/plugins");
     if (!pluginsDir.exists()) {
@@ -41,6 +43,7 @@ void PluginManager::refreshPlugins() {
                 py::module_ plugin = py::module_::import(stem.toStdString().c_str());
                 if (py::hasattr(plugin, "decode_serial")) {
                     m_impl->plugins[stem] = plugin.attr("decode_serial");
+                    m_impl->modules[stem] = plugin;
                     qDebug() << "Loaded plugin:" << stem;
                 }
             } catch (const py::error_already_set& e) {
@@ -64,5 +67,31 @@ QString PluginManager::decode(const QString& pluginName, const QByteArray& data)
         return QString::fromStdString(py::str(result));
     } catch (const py::error_already_set& e) {
         return QString("ERROR [Plugin %1]: %2").arg(pluginName, e.what());
+    }
+}
+
+QString PluginManager::decodeStream(const QString& pluginName, const QByteArray& data) {
+    if (!m_impl->plugins.contains(pluginName)) return QString::fromUtf8(data);
+    if (!m_impl->modules.contains(pluginName)) return decode(pluginName, data);
+
+    try {
+        py::object module = m_impl->modules.value(pluginName);
+        if (!py::hasattr(module, "decode_stream")) return decode(pluginName, data);
+
+        py::object result = module.attr("decode_stream")(py::bytes(data.data(), data.size()));
+        return QString::fromStdString(py::str(result));
+    } catch (const py::error_already_set& e) {
+        return QString("ERROR [Plugin %1]: %2").arg(pluginName, e.what());
+    }
+}
+
+void PluginManager::resetStream(const QString& pluginName) {
+    if (!m_impl->modules.contains(pluginName)) return;
+
+    try {
+        py::object module = m_impl->modules.value(pluginName);
+        if (py::hasattr(module, "reset_stream")) module.attr("reset_stream")();
+    } catch (const py::error_already_set& e) {
+        qWarning() << "Failed to reset stream state for plugin" << pluginName << ":" << e.what();
     }
 }

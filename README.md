@@ -53,5 +53,7 @@ def decode_serial(raw_bytes: bytes) -> str:
 
 Select your plugin from the **"Decoder"** dropdown in the UI to apply it to live and historical data.
 
+Plugins may also implement `decode_stream(raw_bytes)` and `reset_stream()` to carry incomplete data across continuous receive chunks. The application resets stream state before replaying history. The `dipc_frame` plugin uses this to retain partial `0x12`-delimited frames until complete and output each frame, including its delimiters, as an uppercase hex line.
+
 ## Exporting Logs
 The application supports viewport-accurate exporting. Use the **"Export to File"** button to save exactly what is visible in the terminal (respecting your current mode, metadata, and timestamp settings).

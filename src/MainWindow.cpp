@@ -10,8 +10,13 @@
 #include <QStatusBar>
 #include <QScrollBar>
 #include <QTextBlockFormat>
+#include <QTextCharFormat>
 #include <QTextCursor>
+#include <QTextOption>
+#include <QBrush>
+#include <QColor>
 #include <QLineEdit>
+#include <QPalette>
 #include <QRegularExpression>
 #include <QFile>
 #include <QTextStream>
@@ -22,6 +27,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_receiveTimer = new QTimer(this);
     m_receiveTimer->setSingleShot(true);
     connect(m_receiveTimer, &QTimer::timeout, this, &MainWindow::flushReceiveBuffer);
+    connect(m_hysteresisEnabledCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+        m_hysteresisSpin->setEnabled(enabled);
+        m_timeCheck->setEnabled(enabled);
+        m_sepCheck->setEnabled(enabled);
+        if (!enabled) {
+            m_receiveTimer->stop();
+            flushReceiveBuffer();
+        }
+        m_timestampDisplay->setVisible(enabled && m_sepCheck->isChecked());
+        rebuildTerminal();
+    });
 
     m_serialThread = new QThread(this);
     m_worker = new SerialWorker();
@@ -82,6 +98,8 @@ void MainWindow::initUi() {
     m_metaCheck = new QCheckBox("Meta", this);
     m_metaCheck->setChecked(false);
 
+    m_hysteresisEnabledCheck = new QCheckBox("Enable", this);
+    m_hysteresisEnabledCheck->setChecked(false);
     m_hysteresisSpin = new QSpinBox(this);
     m_hysteresisSpin->setRange(0, 5000);
     m_hysteresisSpin->setValue(20);
@@ -93,6 +111,7 @@ void MainWindow::initUi() {
     optLayout->addWidget(m_metaCheck);
     optLayout->addSpacing(20);
     optLayout->addWidget(new QLabel("Hysteresis:"));
+    optLayout->addWidget(m_hysteresisEnabledCheck);
     optLayout->addWidget(m_hysteresisSpin);
     optLayout->addSpacing(20);
     optLayout->addWidget(new QLabel("Decoder:"));
@@ -108,7 +127,7 @@ void MainWindow::initUi() {
     connect(m_hexCheck, &QCheckBox::toggled, this, &MainWindow::rebuildTerminal);
     connect(m_timeCheck, &QCheckBox::toggled, this, &MainWindow::rebuildTerminal);
     connect(m_sepCheck, &QCheckBox::toggled, [this](){
-        m_timestampDisplay->setVisible(m_sepCheck->isChecked());
+        m_timestampDisplay->setVisible(m_hysteresisEnabledCheck->isChecked() && m_sepCheck->isChecked());
         rebuildTerminal();
     });
     connect(m_metaCheck, &QCheckBox::toggled, this, &MainWindow::rebuildTerminal);
@@ -136,7 +155,9 @@ void MainWindow::initUi() {
     m_terminalDisplay = new QPlainTextEdit(this);
     m_terminalDisplay->setReadOnly(true);
     m_terminalDisplay->setFont(monoFont);
-    m_terminalDisplay->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    m_terminalDisplay->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    m_terminalDisplay->setWordWrapMode(QTextOption::WrapAnywhere);
+    m_terminalDisplay->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_terminalDisplay->setFrameStyle(QFrame::NoFrame);
     m_terminalDisplay->document()->setDocumentMargin(0);
     m_terminalDisplay->viewport()->setContentsMargins(0, 0, 0, 0);
@@ -247,10 +268,14 @@ void MainWindow::updateConnectionStatus(bool connected, const QString &msg) {
 }
 
 void MainWindow::handleDataReceived(const QByteArray &data) {
-    m_receiveBuffer.append(data);
-    if (!m_receiveTimer->isActive()) {
-        m_receiveTimer->start(m_hysteresisSpin->value());
+    if (data.isEmpty()) return;
+    if (!m_hysteresisEnabledCheck->isChecked()) {
+        logEvent("RX", data, "RX", true);
+        return;
     }
+
+    m_receiveBuffer.append(data);
+    m_receiveTimer->start(m_hysteresisSpin->value());
 }
 
 void MainWindow::flushReceiveBuffer() {
@@ -309,34 +334,51 @@ void MainWindow::sendData() {
     }
 }
 
-void MainWindow::logEvent(const QString &type, const QByteArray &data, const QString &prefix) {
-    LogEntry entry = { QDateTime::currentDateTime(), type, data, prefix };
+void MainWindow::logEvent(const QString &type, const QByteArray &data, const QString &prefix, bool streaming) {
+    LogEntry entry = { QDateTime::currentDateTime(), type, data, prefix, streaming };
     m_logEntries.append(entry);
     if (m_logEntries.size() > 5000) m_logEntries.removeFirst();
     renderEntry(entry);
 }
 
 void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
+    const bool streamingRx = entry.streaming && entry.type == "RX";
     QString dataText;
     if (entry.type == "INFO") {
         dataText = QString::fromUtf8(entry.data);
     } else if (m_hexCheck->isChecked()) {
-        dataText = entry.data.toHex(' ').toUpper() + "\n";
+        dataText = entry.data.toHex(' ').toUpper();
+        if (streamingRx && m_terminalLineOpen && !dataText.isEmpty()) dataText.prepend(' ');
     } else {
         QString currentDecoder = m_decoderCombo->currentText();
         if (currentDecoder != "None") {
-            dataText = PluginManager::instance().decode(currentDecoder, entry.data);
+            dataText = streamingRx
+                ? PluginManager::instance().decodeStream(currentDecoder, entry.data)
+                : PluginManager::instance().decode(currentDecoder, entry.data);
         } else {
             dataText = QString::fromUtf8(entry.data).replace("\r\n", "\n").replace('\r', '\n');
         }
     }
-    if (!dataText.endsWith('\n')) dataText.append('\n');
+    if (streamingRx && dataText.isEmpty()) return;
+    if (!streamingRx && !dataText.endsWith('\n')) dataText.append('\n');
+    const bool endsWithNewline = dataText.endsWith('\n');
 
     QString prefixStr = entry.prefix;
     if ((entry.type == "RX" || entry.type == "TX") && m_hexCheck->isChecked()) prefixStr += " HEX";
     QString finalPrefix = m_metaCheck->isChecked() ? QString("[%1] ").arg(prefixStr) : "";
 
-    QString timestamp = m_timeCheck->isChecked() ? entry.time.toString("hh:mm:ss.zzz") : "";
+    const bool timeEnabled = m_hysteresisEnabledCheck->isChecked() && m_timeCheck->isChecked();
+    const bool separateTimeEnabled = timeEnabled && m_sepCheck->isChecked();
+    QString timestamp = timeEnabled ? entry.time.toString("hh:mm:ss.zzz") : "";
+    const QColor textColor = entry.type == "TX"
+        ? QColor(Qt::darkGreen)
+        : m_terminalDisplay->palette().color(QPalette::Text);
+    QTextCharFormat terminalFormat;
+    terminalFormat.setForeground(QBrush(textColor));
+    QTextCharFormat timestampFormat;
+    timestampFormat.setForeground(QBrush(entry.type == "TX"
+        ? QColor(Qt::darkGreen)
+        : m_timestampDisplay->palette().color(QPalette::Text)));
 
     QTextBlockFormat blockFormat;
     blockFormat.setLineHeight(13, 4);
@@ -354,31 +396,44 @@ void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
     bool atBottom = vBar->value() >= (vBar->maximum() - 10);
 
     QStringList lines = dataText.split('\n');
-    if (dataText.endsWith('\n')) lines.removeLast();
+    if (endsWithNewline) lines.removeLast();
+    if (lines.isEmpty()) lines.append("");
 
     for (int i = 0; i < lines.size(); ++i) {
         QString line = lines[i];
+        const bool continuesLine = streamingRx && i == 0 && m_terminalLineOpen;
 
         // 1. Terminal Panel Insertion
-        if (!termCursor.atStart()) termCursor.insertBlock(blockFormat);
-        else termCursor.setBlockFormat(blockFormat);
+        if (!continuesLine) {
+            if (!termCursor.atBlockStart()) termCursor.insertBlock(blockFormat);
+            else termCursor.setBlockFormat(blockFormat);
+        }
 
         QString inlineTs = "";
-        if (!m_sepCheck->isChecked() && !timestamp.isEmpty()) {
+        if (!separateTimeEnabled && !timestamp.isEmpty() && !continuesLine) {
             inlineTs = (i == 0 ? timestamp + " " : QString(timestamp.length() + 1, ' '));
         }
 
-        QString linePrefix = (i == 0 ? finalPrefix : QString(finalPrefix.length(), ' '));
-        termCursor.insertText(inlineTs + linePrefix + line);
+        QString linePrefix = continuesLine
+            ? ""
+            : (i == 0 ? finalPrefix : QString(finalPrefix.length(), ' '));
+        termCursor.insertText(inlineTs + linePrefix + line, terminalFormat);
 
         // 2. Timestamp Panel Insertion
-        if (m_sepCheck->isChecked() && m_timeCheck->isChecked()) {
-            if (!tsCursor.atStart()) tsCursor.insertBlock(blockFormat);
+        if (separateTimeEnabled && !continuesLine) {
+            if (!tsCursor.atBlockStart()) tsCursor.insertBlock(blockFormat);
             else tsCursor.setBlockFormat(blockFormat);
 
-            if (i == 0) tsCursor.insertText(timestamp);
-            else tsCursor.insertText(QString(timestamp.length() - 1, ' ') + "|");
+            if (i == 0) tsCursor.insertText(timestamp, timestampFormat);
+            else tsCursor.insertText(QString(timestamp.length() - 1, ' ') + "|", timestampFormat);
         }
+
+        const bool lineBreakAfter = i + 1 < lines.size() || endsWithNewline;
+        if (lineBreakAfter) {
+            termCursor.insertBlock(blockFormat);
+            if (separateTimeEnabled) tsCursor.insertBlock(blockFormat);
+        }
+        m_terminalLineOpen = !lineBreakAfter;
     }
 
     if (scroll && atBottom) {
@@ -389,6 +444,10 @@ void MainWindow::renderEntry(const LogEntry &entry, bool scroll) {
 }
 
 void MainWindow::rebuildTerminal() {
+    const QString currentDecoder = m_decoderCombo->currentText();
+    if (currentDecoder != "None") PluginManager::instance().resetStream(currentDecoder);
+
+    m_terminalLineOpen = false;
     m_terminalDisplay->setUpdatesEnabled(false);
     m_timestampDisplay->setUpdatesEnabled(false);
     m_terminalDisplay->clear();

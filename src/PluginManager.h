@@ -19,6 +19,8 @@ public:
     void refreshPlugins();
     QStringList pluginNames() const;
     QString decode(const QString& pluginName, const QByteArray& data);
+    QString decodeStream(const QString& pluginName, const QByteArray& data);
+    void resetStream(const QString& pluginName);
 
 private:
     PluginManager();

@@ -19,6 +19,7 @@ struct LogEntry {
     QString type; // RX, TX, INFO
     QByteArray data;
     QString prefix;
+    bool streaming = false;
 };
 
 class MainWindow : public QMainWindow {
@@ -41,7 +42,7 @@ private slots:
 
 private:
     void initUi();
-    void logEvent(const QString &type, const QByteArray &data, const QString &prefix = "");
+    void logEvent(const QString &type, const QByteArray &data, const QString &prefix = "", bool streaming = false);
     void renderEntry(const LogEntry &entry, bool scroll = true);
 
     // UI Components
@@ -49,6 +50,7 @@ private:
     QPushButton *m_connectBtn, *m_sendBtn;
     QPlainTextEdit *m_terminalDisplay, *m_timestampDisplay;
     QCheckBox *m_timeCheck, *m_sepCheck, *m_metaCheck, *m_hexCheck, *m_newlineCheck;
+    QCheckBox *m_hysteresisEnabledCheck;
     QRadioButton *m_sendTextRadio, *m_sendHexRadio;
     QSpinBox *m_hysteresisSpin;
     QComboBox *m_decoderCombo;
@@ -60,6 +62,7 @@ private:
     QList<LogEntry> m_logEntries;
     QByteArray m_receiveBuffer;
     QTimer *m_receiveTimer;
+    bool m_terminalLineOpen = false;
     bool m_isConnected = false;
 };
 
